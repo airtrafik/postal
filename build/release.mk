@@ -17,7 +17,50 @@ GO           ?= go
 DIST_DIR     ?= ./dist
 
 # Tool commands using centralized versions from versions.mk
+# svu v3 dropped --strip-prefix (an empty --tag.prefix replaces it), defaults
+# to tags from all branches, and bumps v0 to v1 on a breaking commit. These
+# flags print bare versions, read only release tags (v<digit>…) merged into
+# the current branch, and keep postal on v0. The pattern skips tags that don't
+# start with v<digit> (such as v-old); it can't tell v1.2.3.bak from a
+# release, and svu v3 fails on such a tag, so don't push one. v3 picks the
+# highest such tag, where v1 took the nearest one; they agree while tags only
+# move forward.
+SVU_TAG_PATTERN  := v[0-9]*
 SVU_CMD          := $(GO) run $(SVU_PKG)
+SVU_FLAGS        := --tag.prefix= --tag.mode=current --tag.pattern='$(SVU_TAG_PATTERN)'
+SVU_NEXT_FLAGS   := $(SVU_FLAGS) --v0
+
+# CURRENT and NEXT for the release targets. The guard counts the same tags svu
+# reads (release tags merged into HEAD). Only a repo with no release tag at
+# all, here or on origin, falls back to 0.0.0/0.1.0. A shallow clone (checked
+# first, so it gets the right advice), release tags that exist but aren't
+# merged into HEAD (an old branch), tags on origin that weren't fetched, and
+# any git or svu failure all stop the target, so none of them can be read as
+# "first release". ls-remote matches the end of a ref name, hence the
+# refs/tags/ anchor (archive/v1.0 isn't a release tag); GIT_TERMINAL_PROMPT=0
+# and ssh BatchMode make an origin that wants credentials fail instead of
+# hanging.
+SVU_VERSIONS = \
+	MERGED_TAGS=$$(git tag -l '$(SVU_TAG_PATTERN)' --merged HEAD) || exit 1; \
+	ALL_TAGS=$$(git tag -l '$(SVU_TAG_PATTERN)') || exit 1; \
+	if [ -n "$$MERGED_TAGS" ]; then \
+		CURRENT=$$($(SVU_CMD) current $(SVU_FLAGS)) || exit 1; \
+		NEXT=$$($(SVU_CMD) next $(SVU_NEXT_FLAGS)) || exit 1; \
+	elif [ "$$(git rev-parse --is-shallow-repository)" != "false" ]; then \
+		echo "  ERROR: shallow clone with no release tag in its history; fetch full history and tags (git fetch --unshallow --tags)" >&2; \
+		exit 1; \
+	elif [ -n "$$ALL_TAGS" ]; then \
+		echo "  ERROR: release tags exist but none is merged into HEAD (old branch?)" >&2; \
+		exit 1; \
+	elif ! REMOTE_TAGS=$$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git ls-remote --tags origin 'refs/tags/$(SVU_TAG_PATTERN)'); then \
+		echo "  ERROR: no local release tags and origin could not be checked, so this can't be confirmed as a first release" >&2; \
+		exit 1; \
+	elif [ -n "$$REMOTE_TAGS" ]; then \
+		echo "  ERROR: origin has release tags this clone hasn't fetched; run git fetch --tags" >&2; \
+		exit 1; \
+	else \
+		CURRENT=0.0.0; NEXT=0.1.0; \
+	fi
 
 # Default branch for releases
 DEFAULT_BRANCH   ?= main
@@ -26,8 +69,7 @@ DEFAULT_BRANCH   ?= main
 release-preview:
 	@echo "=== $(PROJECT_NAME) === [ release-preview  ]: Calculating next version from conventional commits..."
 	@echo ""
-	@CURRENT=$$($(SVU_CMD) current --strip-prefix 2>/dev/null || echo "0.0.0"); \
-	NEXT=$$($(SVU_CMD) next --strip-prefix 2>/dev/null || echo "0.1.0"); \
+	@$(SVU_VERSIONS); \
 	echo "  Current version: v$$CURRENT"; \
 	echo "  Next version:    v$$NEXT"; \
 	echo ""; \
@@ -46,8 +88,7 @@ release-preview:
 # Interactive release with confirmation prompt
 release: release-check
 	@echo "=== $(PROJECT_NAME) === [ release          ]: Starting release process..."
-	@CURRENT=$$($(SVU_CMD) current --strip-prefix 2>/dev/null || echo "0.0.0"); \
-	NEXT=$$($(SVU_CMD) next --strip-prefix 2>/dev/null || echo "0.1.0"); \
+	@$(SVU_VERSIONS); \
 	if [ "$$CURRENT" = "$$NEXT" ]; then \
 		echo ""; \
 		echo "  No version bump needed - no feat/fix commits since v$$CURRENT"; \
@@ -72,8 +113,7 @@ release: release-check
 # Non-interactive release for CI pipelines
 release-auto: release-check
 	@echo "=== $(PROJECT_NAME) === [ release-auto     ]: Starting automated release..."
-	@CURRENT=$$($(SVU_CMD) current --strip-prefix 2>/dev/null || echo "0.0.0"); \
-	NEXT=$$($(SVU_CMD) next --strip-prefix 2>/dev/null || echo "0.1.0"); \
+	@$(SVU_VERSIONS); \
 	if [ "$$CURRENT" = "$$NEXT" ]; then \
 		echo "  No version bump needed - no feat/fix commits since v$$CURRENT"; \
 		exit 0; \
