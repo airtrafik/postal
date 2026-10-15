@@ -39,7 +39,8 @@ SVU_NEXT_FLAGS   := $(SVU_FLAGS) --v0
 # "first release". ls-remote matches the end of a ref name, hence the
 # refs/tags/ anchor (archive/v1.0 isn't a release tag); GIT_TERMINAL_PROMPT=0
 # and ssh BatchMode make an origin that wants credentials fail instead of
-# hanging.
+# hanging. BatchMode is appended to the caller's own ssh command
+# (GIT_SSH_COMMAND or core.sshCommand), so a custom key still works.
 SVU_VERSIONS = \
 	MERGED_TAGS=$$(git tag -l '$(SVU_TAG_PATTERN)' --merged HEAD) || exit 1; \
 	ALL_TAGS=$$(git tag -l '$(SVU_TAG_PATTERN)') || exit 1; \
@@ -52,7 +53,7 @@ SVU_VERSIONS = \
 	elif [ -n "$$ALL_TAGS" ]; then \
 		echo "  ERROR: release tags exist but none is merged into HEAD (old branch?)" >&2; \
 		exit 1; \
-	elif ! REMOTE_TAGS=$$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -o BatchMode=yes' git ls-remote --tags origin 'refs/tags/$(SVU_TAG_PATTERN)'); then \
+	elif ! REMOTE_TAGS=$$(GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="$${GIT_SSH_COMMAND:-$$(git config core.sshCommand || echo ssh)} -o BatchMode=yes" git ls-remote --tags origin 'refs/tags/$(SVU_TAG_PATTERN)'); then \
 		echo "  ERROR: no local release tags and origin could not be checked, so this can't be confirmed as a first release" >&2; \
 		exit 1; \
 	elif [ -n "$$REMOTE_TAGS" ]; then \
