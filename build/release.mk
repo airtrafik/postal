@@ -59,7 +59,7 @@ SVU_VERSIONS = \
 			echo "  ERROR: svu read v$$CURRENT but no tag has that exact name; the highest release tag isn't vMAJOR.MINOR.PATCH (v1.2?)" >&2; \
 			exit 1; \
 		fi; \
-		SINCE=$$(git rev-list --count "v$$CURRENT..HEAD") || exit 1; \
+		SINCE=$$(git rev-list --count "refs/tags/v$$CURRENT..HEAD") || exit 1; \
 		if [ "$$SINCE" -gt 0 ]; then \
 			NEXT=$$($(SVU_CMD) next $(SVU_NEXT_FLAGS)) || exit 1; \
 		else \
@@ -177,7 +177,7 @@ release-execute:
 	fi
 	@echo "=== $(PROJECT_NAME) === [ release-execute  ]: Creating tag v$(VERSION)..."
 	@git tag v$(VERSION)
-	@git push --no-verify origin HEAD:$(DEFAULT_BRANCH) v$(VERSION)
+	@git push --atomic --no-verify origin HEAD:$(DEFAULT_BRANCH) refs/tags/v$(VERSION)
 	@echo "=== $(PROJECT_NAME) === [ release-execute  ]: Creating GitHub release..."
 	@gh release create v$(VERSION) --generate-notes --latest
 	@echo ""
