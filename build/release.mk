@@ -25,10 +25,14 @@ DIST_DIR     ?= ./dist
 # release, and svu v3 fails on such a tag, so don't push one. v3 picks the
 # highest such tag, where v1 took the nearest one; they agree while tags only
 # move forward.
+# --always makes svu next return a patch when no commit since the tag is a
+# feat, fix or breaking change (only chore, deps, docs, test...), so those
+# still ship. It would also bump with no commits at all, so SVU_VERSIONS only
+# calls svu next when there is at least one commit since the tag.
 SVU_TAG_PATTERN  := v[0-9]*
 SVU_CMD          := $(GO) run $(SVU_PKG)
 SVU_FLAGS        := --tag.prefix= --tag.mode=current --tag.pattern='$(SVU_TAG_PATTERN)'
-SVU_NEXT_FLAGS   := $(SVU_FLAGS) --v0
+SVU_NEXT_FLAGS   := $(SVU_FLAGS) --v0 --always
 
 # CURRENT and NEXT for the release targets. The guard counts the same tags svu
 # reads (release tags merged into HEAD). Only a repo with no release tag at
@@ -41,12 +45,26 @@ SVU_NEXT_FLAGS   := $(SVU_FLAGS) --v0
 # and ssh BatchMode make an origin that wants credentials fail instead of
 # hanging. BatchMode is appended to the caller's own ssh command
 # (GIT_SSH_COMMAND or core.sshCommand), so a custom key still works.
+#
+# With no commits since the current tag NEXT equals CURRENT and nothing is
+# released; any commit at all gives at least a patch (feat a minor). Commits
+# are counted from the tag v$CURRENT, so a highest tag svu normalizes (v1.2,
+# read as 1.2.0) stops the target.
 SVU_VERSIONS = \
 	MERGED_TAGS=$$(git tag -l '$(SVU_TAG_PATTERN)' --merged HEAD) || exit 1; \
 	ALL_TAGS=$$(git tag -l '$(SVU_TAG_PATTERN)') || exit 1; \
 	if [ -n "$$MERGED_TAGS" ]; then \
 		CURRENT=$$($(SVU_CMD) current $(SVU_FLAGS)) || exit 1; \
-		NEXT=$$($(SVU_CMD) next $(SVU_NEXT_FLAGS)) || exit 1; \
+		if ! git rev-parse -q --verify "refs/tags/v$$CURRENT" >/dev/null; then \
+			echo "  ERROR: svu read v$$CURRENT but no tag has that exact name; the highest release tag isn't vMAJOR.MINOR.PATCH (v1.2?)" >&2; \
+			exit 1; \
+		fi; \
+		SINCE=$$(git rev-list --count "refs/tags/v$$CURRENT..HEAD") || exit 1; \
+		if [ "$$SINCE" -gt 0 ]; then \
+			NEXT=$$($(SVU_CMD) next $(SVU_NEXT_FLAGS)) || exit 1; \
+		else \
+			NEXT=$$CURRENT; \
+		fi; \
 	elif [ "$$(git rev-parse --is-shallow-repository)" != "false" ]; then \
 		echo "  ERROR: shallow clone with no release tag in its history; fetch full history and tags (git fetch --unshallow --tags)" >&2; \
 		exit 1; \
@@ -75,7 +93,7 @@ release-preview:
 	echo "  Next version:    v$$NEXT"; \
 	echo ""; \
 	if [ "$$CURRENT" = "$$NEXT" ]; then \
-		echo "  Status: No version bump needed (no feat/fix commits since last tag)"; \
+		echo "  Status: No version bump needed (no commits since v$$CURRENT)"; \
 	else \
 		echo "  Commits since v$$CURRENT:"; \
 		git log --oneline v$$CURRENT..HEAD 2>/dev/null | head -20 | sed 's/^/    /'; \
@@ -92,7 +110,7 @@ release: release-check
 	@$(SVU_VERSIONS); \
 	if [ "$$CURRENT" = "$$NEXT" ]; then \
 		echo ""; \
-		echo "  No version bump needed - no feat/fix commits since v$$CURRENT"; \
+		echo "  No version bump needed - no commits since v$$CURRENT"; \
 		echo "  To force a release, use: make release-tag VERSION=x.y.z"; \
 		exit 0; \
 	fi; \
@@ -116,7 +134,7 @@ release-auto: release-check
 	@echo "=== $(PROJECT_NAME) === [ release-auto     ]: Starting automated release..."
 	@$(SVU_VERSIONS); \
 	if [ "$$CURRENT" = "$$NEXT" ]; then \
-		echo "  No version bump needed - no feat/fix commits since v$$CURRENT"; \
+		echo "  No version bump needed - no commits since v$$CURRENT"; \
 		exit 0; \
 	fi; \
 	echo "  Releasing v$$NEXT (current: v$$CURRENT)"; \
@@ -159,7 +177,7 @@ release-execute:
 	fi
 	@echo "=== $(PROJECT_NAME) === [ release-execute  ]: Creating tag v$(VERSION)..."
 	@git tag v$(VERSION)
-	@git push --no-verify origin HEAD:$(DEFAULT_BRANCH) --tags
+	@git push --atomic --no-verify origin HEAD:$(DEFAULT_BRANCH) refs/tags/v$(VERSION)
 	@echo "=== $(PROJECT_NAME) === [ release-execute  ]: Creating GitHub release..."
 	@gh release create v$(VERSION) --generate-notes --latest
 	@echo ""

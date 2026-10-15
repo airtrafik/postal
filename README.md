@@ -109,7 +109,7 @@ make help     # Show all targets
 
 ## Releasing
 
-Releases use [svu](https://github.com/caarlos0/svu) for semantic versioning based on conventional commits:
+Releases use [svu](https://github.com/caarlos0/svu) for semantic versioning based on conventional commits. `feat` gives a minor (a breaking change too, while on v0); any other commit since the last tag (fix, chore, deps, test, docs) gives a patch; no commits since the tag releases nothing.
 
 ```bash
 make release-preview  # Show what the next version would be
